@@ -1,0 +1,29 @@
+{
+  "id": "/agenda-pmct-web/",
+  "name": "Agenda PMCT",
+  "short_name": "Agenda PMCT",
+  "description": "Agenda para pacientes y sesiones con sincronización segura en Google Drive.",
+  "lang": "es-MX",
+  "dir": "ltr",
+  "start_url": "/agenda-pmct-web/",
+  "scope": "/agenda-pmct-web/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F6F4F7",
+  "theme_color": "#6B3B73",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "agenda-pmct-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "agenda-pmct-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
