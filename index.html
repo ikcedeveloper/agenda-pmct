@@ -1998,6 +1998,8 @@
     ];
     const SLOT_TIMES = ["10:00", "11:00", "12:00", "13:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
     const ALLOW_PRE_DOCUMENTATION_FOR_TESTS = false;
+    const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
+    const USER_ACTIVITY_EVENTS = ["click", "keydown", "touchstart", "scroll", "mousemove"];
 
     let DB = loadDB();
     let state = {
@@ -2013,7 +2015,10 @@
       googleProfile: null,
       googleSessionExpiresAt: 0,
       driveSyncTimer: null,
-      driveFileId: ""
+      driveFileId: "",
+      inactivityTimer: null,
+      tokenExpiryTimer: null,
+      lastActivityAt: 0
     };
 
     const els = {
@@ -2177,6 +2182,7 @@
       renderTimeSelect();
       applyDateConstraints();
       bindEvents();
+      bindSessionActivityListeners();
       restoreSession();
       if (state.currentUser) {
         if (canUseDriveSession()) {
@@ -2207,6 +2213,60 @@
       state.googleProfile = null;
       state.googleSessionExpiresAt = 0;
       sessionStorage.removeItem(GOOGLE_SESSION_KEY);
+    }
+
+    function clearSessionTimers() {
+      clearTimeout(state.inactivityTimer);
+      clearTimeout(state.tokenExpiryTimer);
+      state.inactivityTimer = null;
+      state.tokenExpiryTimer = null;
+    }
+
+    function getSessionCloseMessage(reason = "manual") {
+      if (reason === "inactive") return "La sesión se cerró por seguridad tras 10 minutos de inactividad.";
+      if (reason === "token-expired") return "La sesión expiró. Inicia sesión nuevamente.";
+      return "";
+    }
+
+    function scheduleInactivityLogout() {
+      clearTimeout(state.inactivityTimer);
+      if (!state.currentUser) return;
+      state.inactivityTimer = window.setTimeout(() => {
+        if (!state.currentUser) return;
+        handleLogout("inactive");
+      }, INACTIVITY_LIMIT_MS);
+    }
+
+    function handleUserActivity(event) {
+      if (!state.currentUser) return;
+      const now = Date.now();
+      if (event?.type === "mousemove" && state.lastActivityAt && (now - state.lastActivityAt) < 15000) return;
+      state.lastActivityAt = now;
+      scheduleInactivityLogout();
+    }
+
+    function scheduleTokenExpiryLogout() {
+      clearTimeout(state.tokenExpiryTimer);
+      if (!state.currentUser?.googleSub || !state.googleSessionExpiresAt) return;
+      const remainingMs = Math.max(state.googleSessionExpiresAt - Date.now(), 0);
+      state.tokenExpiryTimer = window.setTimeout(() => {
+        if (!state.currentUser) return;
+        handleLogout("token-expired");
+      }, remainingMs);
+    }
+
+    function startSessionProtection() {
+      clearSessionTimers();
+      if (!state.currentUser) return;
+      state.lastActivityAt = Date.now();
+      scheduleInactivityLogout();
+      scheduleTokenExpiryLogout();
+    }
+
+    function bindSessionActivityListeners() {
+      USER_ACTIVITY_EVENTS.forEach(eventName => {
+        document.addEventListener(eventName, handleUserActivity, { passive: true });
+      });
     }
 
     function saveGoogleSession(tokenResponse, profile) {
@@ -2850,6 +2910,7 @@
     function showApp() {
       els.authView.classList.add("hidden");
       els.appView.classList.remove("hidden");
+      startSessionProtection();
       const displayName = state.currentUser?.displayName || "Cuenta principal";
       els.currentUserTag.textContent = displayName;
       if (els.sidebarBrandTitle) els.sidebarBrandTitle.textContent = displayName;
@@ -4459,19 +4520,22 @@ function renderCalendar() {
       renderDriveSyncInfo();
     }
 
-    function handleLogout() {
+    function handleLogout(reason = "manual") {
+      const message = getSessionCloseMessage(reason);
       state.currentUser = null;
       state.selectedClinicalPatientId = null;
       state.selectedClinicalChapterId = null;
       state.pendingPatientPayload = null;
       state.pendingDuplicateContext = null;
       clearTimeout(state.driveSyncTimer);
+      clearSessionTimers();
       sessionStorage.removeItem(SESSION_KEY);
       clearGoogleSession();
       closeFirstSessionModal();
       closeDuplicateModal();
       showLoginMode();
       renderDriveSyncInfo();
+      if (message) toast(message, "info");
     }
 
     function switchView(viewId) {
