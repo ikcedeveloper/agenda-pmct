@@ -1521,6 +1521,10 @@
                     <label for="patientBirthDate">Fecha de nacimiento</label>
                     <input id="patientBirthDate" type="date" required />
                   </div>
+                  <div class="field">
+                    <label for="patientAge">Edad</label>
+                    <input id="patientAge" type="text" readonly placeholder="Se calcula automáticamente" />
+                  </div>
                   <div id="newPatientSessionField" class="field">
                     <label for="patientFirstSessionDate">Fecha de primera sesión</label>
                     <input id="patientFirstSessionDate" type="date" />
@@ -1987,8 +1991,7 @@
       driveScope: "openid email profile https://www.googleapis.com/auth/drive.appdata"
     };
     const AUTHORIZED_GOOGLE_EMAILS = [
-      "pamelacisneros010@gmail.com",
-      "edsasa2.33@gmail.com"
+      "pamelacisneros010@gmail.com"
     ];
     const GOOGLE_DRIVE_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
     const ENABLE_LOCAL_FALLBACK_WHEN_GOOGLE_NOT_CONFIGURED = true;
@@ -1999,8 +2002,6 @@
     ];
     const SLOT_TIMES = ["10:00", "11:00", "12:00", "13:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
     const ALLOW_PRE_DOCUMENTATION_FOR_TESTS = false;
-    const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
-    const USER_ACTIVITY_EVENTS = ["click", "keydown", "touchstart", "scroll", "mousemove"];
 
     let DB = loadDB();
     let state = {
@@ -2016,10 +2017,7 @@
       googleProfile: null,
       googleSessionExpiresAt: 0,
       driveSyncTimer: null,
-      driveFileId: "",
-      inactivityTimer: null,
-      tokenExpiryTimer: null,
-      lastActivityAt: 0
+      driveFileId: ""
     };
 
     const els = {
@@ -2068,6 +2066,7 @@
       patientName: document.getElementById("patientName"),
       patientLastName: document.getElementById("patientLastName"),
       patientBirthDate: document.getElementById("patientBirthDate"),
+      patientAge: document.getElementById("patientAge"),
       patientFirstSessionDate: document.getElementById("patientFirstSessionDate"),
       patientCellPhone: document.getElementById("patientCellPhone"),
       patientEmail: document.getElementById("patientEmail"),
@@ -2183,7 +2182,6 @@
       renderTimeSelect();
       applyDateConstraints();
       bindEvents();
-      bindSessionActivityListeners();
       restoreSession();
       if (state.currentUser) {
         if (canUseDriveSession()) {
@@ -2214,60 +2212,6 @@
       state.googleProfile = null;
       state.googleSessionExpiresAt = 0;
       sessionStorage.removeItem(GOOGLE_SESSION_KEY);
-    }
-
-    function clearSessionTimers() {
-      clearTimeout(state.inactivityTimer);
-      clearTimeout(state.tokenExpiryTimer);
-      state.inactivityTimer = null;
-      state.tokenExpiryTimer = null;
-    }
-
-    function getSessionCloseMessage(reason = "manual") {
-      if (reason === "inactive") return "La sesión se cerró por seguridad tras 10 minutos de inactividad.";
-      if (reason === "token-expired") return "La sesión expiró. Inicia sesión nuevamente.";
-      return "";
-    }
-
-    function scheduleInactivityLogout() {
-      clearTimeout(state.inactivityTimer);
-      if (!state.currentUser) return;
-      state.inactivityTimer = window.setTimeout(() => {
-        if (!state.currentUser) return;
-        handleLogout("inactive");
-      }, INACTIVITY_LIMIT_MS);
-    }
-
-    function handleUserActivity(event) {
-      if (!state.currentUser) return;
-      const now = Date.now();
-      if (event?.type === "mousemove" && state.lastActivityAt && (now - state.lastActivityAt) < 15000) return;
-      state.lastActivityAt = now;
-      scheduleInactivityLogout();
-    }
-
-    function scheduleTokenExpiryLogout() {
-      clearTimeout(state.tokenExpiryTimer);
-      if (!state.currentUser?.googleSub || !state.googleSessionExpiresAt) return;
-      const remainingMs = Math.max(state.googleSessionExpiresAt - Date.now(), 0);
-      state.tokenExpiryTimer = window.setTimeout(() => {
-        if (!state.currentUser) return;
-        handleLogout("token-expired");
-      }, remainingMs);
-    }
-
-    function startSessionProtection() {
-      clearSessionTimers();
-      if (!state.currentUser) return;
-      state.lastActivityAt = Date.now();
-      scheduleInactivityLogout();
-      scheduleTokenExpiryLogout();
-    }
-
-    function bindSessionActivityListeners() {
-      USER_ACTIVITY_EVENTS.forEach(eventName => {
-        document.addEventListener(eventName, handleUserActivity, { passive: true });
-      });
     }
 
     function saveGoogleSession(tokenResponse, profile) {
@@ -2778,6 +2722,8 @@
       els.navBtns.forEach(btn => btn.addEventListener("click", () => { closeProfileMenu(); switchView(btn.dataset.viewTarget); }));
       els.patientEntryType.addEventListener("change", toggleEntryTypeFields);
       els.patientCareType.addEventListener("change", toggleInsuranceFields);
+      els.patientBirthDate.addEventListener("change", updatePatientAgeField);
+      els.patientBirthDate.addEventListener("input", updatePatientAgeField);
       els.patientForm.addEventListener("submit", handleSavePatient);
       els.resetPatientFormBtn.addEventListener("click", resetPatientForm);
       els.patientSearch.addEventListener("input", renderPatients);
@@ -2911,7 +2857,6 @@
     function showApp() {
       els.authView.classList.add("hidden");
       els.appView.classList.remove("hidden");
-      startSessionProtection();
       const displayName = state.currentUser?.displayName || "Cuenta principal";
       els.currentUserTag.textContent = displayName;
       if (els.sidebarBrandTitle) els.sidebarBrandTitle.textContent = displayName;
@@ -3083,6 +3028,24 @@ function renderInsuranceList() {
       const month = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       return `${year}-${month}-${day}`;
+    }
+
+    function calculateAgeFromBirthDate(birthDateIso) {
+      if (!birthDateIso) return null;
+      const [year, month, day] = String(birthDateIso).split("-").map(Number);
+      if (!year || !month || !day) return null;
+      const today = new Date();
+      let age = today.getFullYear() - year;
+      const monthDiff = (today.getMonth() + 1) - month;
+      const dayDiff = today.getDate() - day;
+      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age -= 1;
+      return age >= 0 ? age : null;
+    }
+
+    function updatePatientAgeField() {
+      if (!els.patientAge) return;
+      const age = calculateAgeFromBirthDate(els.patientBirthDate.value);
+      els.patientAge.value = age == null ? "" : `${age} año${age === 1 ? "" : "s"}`;
     }
 
     function applyDateConstraints() {
@@ -4521,22 +4484,19 @@ function renderCalendar() {
       renderDriveSyncInfo();
     }
 
-    function handleLogout(reason = "manual") {
-      const message = getSessionCloseMessage(reason);
+    function handleLogout() {
       state.currentUser = null;
       state.selectedClinicalPatientId = null;
       state.selectedClinicalChapterId = null;
       state.pendingPatientPayload = null;
       state.pendingDuplicateContext = null;
       clearTimeout(state.driveSyncTimer);
-      clearSessionTimers();
       sessionStorage.removeItem(SESSION_KEY);
       clearGoogleSession();
       closeFirstSessionModal();
       closeDuplicateModal();
       showLoginMode();
       renderDriveSyncInfo();
-      if (message) toast(message, "info");
     }
 
     function switchView(viewId) {
@@ -4598,6 +4558,7 @@ function renderCalendar() {
         firstName: sanitizePersonName(els.patientName.value),
         lastName: sanitizePersonName(els.patientLastName.value),
         birthDate: els.patientBirthDate.value,
+        age: calculateAgeFromBirthDate(els.patientBirthDate.value),
         firstSessionDate: els.patientEntryType.value === "NUEVO" ? els.patientFirstSessionDate.value : "",
         cellPhone: normalizePhone(els.patientCellPhone.value),
         email: cleanEmail(els.patientEmail.value),
@@ -4829,6 +4790,7 @@ function renderCalendar() {
                 <div class="meta-row">
                   ${insuranceInfo}
                   ${entryTag}
+                  ${patient.age != null ? `<span class="tag">Edad: ${patient.age} año${patient.age === 1 ? "" : "s"}</span>` : ""}
                   ${patient.firstSessionDate ? `<span class="tag">Primera sesión: ${formatDate(patient.firstSessionDate)}</span>` : `<span class="tag">Sin primera sesión en sistema</span>`}
                 </div>
               </div>
@@ -4863,6 +4825,7 @@ function renderCalendar() {
       els.patientName.value = patient.firstName;
       els.patientLastName.value = patient.lastName;
       els.patientBirthDate.value = patient.birthDate;
+      updatePatientAgeField();
       els.patientFirstSessionDate.value = patient.firstSessionDate || "";
       els.patientCellPhone.value = patient.cellPhone || "";
       els.patientEmail.value = patient.email || "";
@@ -4888,6 +4851,7 @@ function renderCalendar() {
       els.patientFormTitle.textContent = "Nuevo paciente";
       els.patientEntryType.value = "NUEVO";
       els.patientCareType.value = "PARTICULAR";
+      if (els.patientAge) els.patientAge.value = "";
       toggleInsuranceFields();
       toggleEntryTypeFields();
       els.patientCompany.value = "";
